@@ -625,21 +625,21 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 		return nil, err
 	}
 
-	imageRdr, err := req.Image.Reader()
-	if err != nil {
-		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
-		}
-		return nil, err
-	}
-	config, _, err := image.DecodeConfig(imageRdr)
-	if err != nil {
-		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
-		}
-		return nil, err
-	}
-	outPixels := int64(config.Height) * int64(config.Width)
+	// imageRdr, err := req.Image.Reader()
+	// if err != nil {
+	// 	if monitor.Enabled {
+	// 		monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+	// 	}
+	// 	return nil, err
+	// }
+	// config, _, err := image.DecodeConfig(imageRdr)
+	// if err != nil {
+	// 	if monitor.Enabled {
+	// 		monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+	// 	}
+	// 	return nil, err
+	// }
+	outPixels := int64(1000)
 
 	setHeaders, balUpdate, err := prepareAIPayment(ctx, sess, outPixels)
 	if err != nil {

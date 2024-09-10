@@ -313,17 +313,17 @@ func handleAIRequest(ctx context.Context, w http.ResponseWriter, r *http.Request
 			return orch.SegmentAnything2(ctx, v)
 		}
 
-		imageRdr, err := v.Image.Reader()
+		_, err := v.Image.Reader()
 		if err != nil {
 			respondWithError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		config, _, err := image.DecodeConfig(imageRdr)
-		if err != nil {
-			respondWithError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		outPixels = int64(config.Height) * int64(config.Width)
+		// config, _, err := image.DecodeConfig(imageRdr)
+		// if err != nil {
+		// 	respondWithError(w, err.Error(), http.StatusBadRequest)
+		// 	return
+		// }
+		outPixels = 1000
 	default:
 		respondWithError(w, "Unknown request type", http.StatusBadRequest)
 		return
