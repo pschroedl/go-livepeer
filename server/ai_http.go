@@ -313,7 +313,7 @@ func handleAIRequest(ctx context.Context, w http.ResponseWriter, r *http.Request
 			return orch.SegmentAnything2(ctx, v)
 		}
 
-		_, err := v.Image.Reader()
+		_, err := v.MediaFile.Reader()
 		if err != nil {
 			respondWithError(w, err.Error(), http.StatusBadRequest)
 			return
