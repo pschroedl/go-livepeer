@@ -80,7 +80,7 @@ const (
 	Capability_AudioToText                Capability = 31
 	Capability_SegmentAnything2           Capability = 32
 	Capability_LLM                        Capability = 33
-	Capability_Lipsync                    Capability = 34
+	Capability_Lipsync                    Capability = 35
 )
 
 var CapabilityNameLookup = map[Capability]string{

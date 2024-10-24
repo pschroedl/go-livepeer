@@ -415,7 +415,7 @@ func handleAIRequest(ctx context.Context, w http.ResponseWriter, r *http.Request
 			modelID = *v.ModelId
 		}
 		submitFn = func(ctx context.Context) (interface{}, error) {
-			return orch.Lipsync(ctx, v)
+			return orch.Lipsync(ctx, requestID, v)
 		}
 		if v.Audio != nil {
 			outPixels, err = common.CalculateAudioDuration(*v.Audio)
@@ -742,6 +742,16 @@ func parseMultiPartResult(body io.Reader, boundary string, pipeline string) core
 					wkrResult.Err = err
 					break
 				}
+			case "lipsync":
+				var parsedResp worker.VideoBinaryResponse
+
+				err := json.Unmarshal(body, &parsedResp)
+				if err != nil {
+					glog.Error("Error getting results json:", err)
+					wkrResult.Err = err
+					break
+				}
+				results = parsedResp
 			}
 
 			wkrResult.Results = results

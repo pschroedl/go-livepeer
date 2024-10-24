@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,6 +207,13 @@ func TestRunAIJob(t *testing.T) {
 			expectedOutputs: 1,
 		},
 		{
+			name:            "Lipsync_Success",
+			notify:          createAIJob(8, "lipsync", modelId, fmt.Sprintf("%s|%s", parsedURL.String()+"/audio.mp4", parsedURL.String()+"/image.png")),
+			pipeline:        "lipsync",
+			expectedErr:     "",
+			expectedOutputs: 1,
+		},
+		{
 			name:            "UnsupportedPipeline",
 			notify:          createAIJob(8, "unsupported-pipeline", modelId, ""),
 			pipeline:        "unsupported-pipeline",
@@ -312,6 +321,13 @@ func TestRunAIJob(t *testing.T) {
 					assert.Equal(len(results.Files), 0)
 					expectedResp, _ := wkr.LLM(context.Background(), worker.GenLLMFormdataRequestBody{})
 					assert.Equal(expectedResp, &jsonRes)
+				case "lipsync":
+					lipsyncResp, ok := results.Results.(worker.VideoBinaryResponse)
+					assert.True(ok)
+					assert.Equal("8", headers.Get("TaskId"))
+					assert.Equal(len(results.Files), 1)
+					expectedResp, _ := wkr.Lipsync(context.Background(), worker.GenLipsyncMultipartRequestBody{})
+					assert.Equal(expectedResp.FileSize, lipsyncResp.FileSize)
 				}
 			}
 		})
@@ -341,6 +357,13 @@ func createAIJob(taskId int64, pipeline, modelId, inputUrl string) *net.NotifyAI
 		req = worker.GenSegmentAnything2MultipartRequestBody{ModelId: &modelId, Image: inputFile}
 	case "llm":
 		req = worker.GenLLMFormdataRequestBody{Prompt: "tell me a story", ModelId: &modelId}
+	case "lipsync":
+		urls := strings.Split(inputUrl, "|")
+		var audioFile oapitypes.File
+		var imageFile oapitypes.File
+		audioFile.InitFromBytes([]byte(urls[0]), "")
+		imageFile.InitFromBytes([]byte(urls[1]), "")
+		req = worker.GenLipsyncMultipartRequestBody{ModelId: &modelId, Audio: &audioFile, Image: imageFile}
 	case "unsupported-pipeline":
 		req = worker.GenTextToImageJSONRequestBody{Prompt: "test prompt", ModelId: &modelId}
 	case "text-to-image-invalid":
@@ -564,6 +587,17 @@ func (a *stubAIWorker) LLM(ctx context.Context, req worker.GenLLMFormdataRequest
 		return nil, a.Err
 	} else {
 		return &worker.LLMResponse{Response: "output tokens", TokensUsed: 10}, nil
+	}
+}
+
+func (a *stubAIWorker) Lipsync(ctx context.Context, req worker.GenLipsyncMultipartRequestBody) (*worker.VideoBinaryResponse, error) {
+	a.Called++
+	file, _ := os.ReadFile("./test.flv")
+	encoded := base64.StdEncoding.EncodeToString(file)
+	if a.Err != nil {
+		return nil, a.Err
+	} else {
+		return &worker.VideoBinaryResponse{Base64Video: encoded, FileSize: len(encoded)}, nil
 	}
 }
 

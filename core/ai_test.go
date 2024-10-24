@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -653,6 +654,12 @@ func (a *stubAIWorker) SegmentAnything2(ctx context.Context, req worker.GenSegme
 
 func (a *stubAIWorker) LLM(ctx context.Context, req worker.GenLLMFormdataRequestBody) (interface{}, error) {
 	return &worker.LLMResponse{Response: "response tokens", TokensUsed: 10}, nil
+}
+
+func (n *stubAIWorker) Lipsync(ctx context.Context, req worker.GenLipsyncMultipartRequestBody) (*worker.VideoBinaryResponse, error) {
+	file, _ := os.ReadFile("./test.flv")
+	encoded := base64.StdEncoding.EncodeToString(file)
+	return &worker.VideoBinaryResponse{Base64Video: encoded, FileSize: len(encoded)}, nil
 }
 
 func (a *stubAIWorker) Warm(ctx context.Context, arg1, arg2 string, endpoint worker.RunnerEndpoint, flags worker.OptimizationFlags) error {

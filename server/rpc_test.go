@@ -208,7 +208,7 @@ func (r *stubOrchestrator) LLM(ctx context.Context, requestID string, req worker
 func (r *stubOrchestrator) SegmentAnything2(ctx context.Context, requestID string, req worker.GenSegmentAnything2MultipartRequestBody) (interface{}, error) {
 	return nil, nil
 }
-func (r *stubOrchestrator) Lipsync(ctx context.Context, req worker.GenLipsyncMultipartRequestBody) (*worker.VideoResponse, error) {
+func (r *stubOrchestrator) Lipsync(ctx context.Context, requestID string, req worker.GenLipsyncMultipartRequestBody) (interface{}, error) {
 	return nil, nil
 }
 func (r *stubOrchestrator) CheckAICapacity(pipeline, modelID string) bool {
@@ -1407,7 +1407,7 @@ func (r *mockOrchestrator) LLM(ctx context.Context, requestID string, req worker
 func (r *mockOrchestrator) SegmentAnything2(ctx context.Context, requestID string, req worker.GenSegmentAnything2MultipartRequestBody) (interface{}, error) {
 	return nil, nil
 }
-func (r *mockOrchestrator) Lipsync(ctx context.Context, req worker.GenLipsyncMultipartRequestBody) (*worker.VideoResponse, error) {
+func (r *mockOrchestrator) Lipsync(ctx context.Context, requestID string, req worker.GenLipsyncMultipartRequestBody) (interface{}, error) {
 	return nil, nil
 }
 func (r *mockOrchestrator) CheckAICapacity(pipeline, modelID string) bool {

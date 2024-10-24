@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -285,6 +286,34 @@ func runAIJob(n *core.LivepeerNode, orchAddr string, httpc *http.Client, notify 
 			return n.LLM(ctx, req)
 		}
 		reqOk = true
+	case "lipsync":
+		var req worker.GenLipsyncMultipartRequestBody
+		err = json.Unmarshal(reqData.Request, &req)
+		if err != nil || req.ModelId == nil {
+			break
+		}
+		imageUrl, err := req.Image.Bytes()
+		if err != nil {
+			break
+		}
+		audioUrl, err := req.Audio.Bytes()
+		if err != nil {
+			break
+		}
+		audio, aErr := core.DownloadData(ctx, string(audioUrl))
+		image, iErr := core.DownloadData(ctx, string(imageUrl))
+		if aErr != nil || iErr != nil {
+			break
+		}
+		modelID = *req.ModelId
+		resultType = "video/mp4"
+		req.Image.InitFromBytes(image, "image")
+		req.Audio.InitFromBytes(audio, "audio")
+
+		processFn = func(ctx context.Context) (interface{}, error) {
+			return n.Lipsync(ctx, req)
+		}
+		reqOk = true
 	default:
 		err = errors.New("AI request pipeline type not supported")
 	}
@@ -339,7 +368,9 @@ func runAIJob(n *core.LivepeerNode, orchAddr string, httpc *http.Client, notify 
 		// Parse data from runner to send back to orchestrator
 		//   ***-to-image gets base64 encoded string of binary image from runner
 		//   image-to-video processes frames from runner and returns ImageResponse with url to local file
+		//   lipsync sends back a video that is base64 encoded string with a worker.VideoBinaryResponse. The encoded string is not a data url.
 		imgResp, isImg := resp.(*worker.ImageResponse)
+		vidResp, isVid := resp.(*worker.VideoBinaryResponse)
 		if isImg {
 			var imgBuf bytes.Buffer
 			for i, image := range imgResp.Images {
@@ -399,10 +430,36 @@ func runAIJob(n *core.LivepeerNode, orchAddr string, httpc *http.Client, notify 
 			}
 			// update resp for image.Url updates
 			resp = imgResp
+		} else if isVid {
+			vidBuf, err := base64.StdEncoding.DecodeString(vidResp.Base64Video)
+			if err != nil {
+				clog.Errorf(ctx, "Could not create multipart part err=%q", err)
+				sendAIResult(ctx, n, orchAddr, notify.AIJobData.Pipeline, modelID, httpc, contentType, nil, err)
+				return
+			}
+			length := len(vidBuf)
+			vidResp.Base64Video = fmt.Sprintf("%v.mp4", core.RandomManifestID()) // update json response to track filename attached
+
+			// create the part
+			w.SetBoundary(boundary)
+			hdrs := textproto.MIMEHeader{
+				"Content-Type":        {resultType},
+				"Content-Length":      {strconv.Itoa(length)},
+				"Content-Disposition": {"attachment; filename=" + vidResp.Base64Video},
+			}
+			fw, err := w.CreatePart(hdrs)
+			if err != nil {
+				clog.Errorf(ctx, "Could not create multipart part err=%q", err)
+				sendAIResult(ctx, n, orchAddr, notify.AIJobData.Pipeline, modelID, httpc, contentType, nil, err)
+				return
+			}
+			io.Copy(fw, bytes.NewBuffer(vidBuf))
+
+			// update resp for vidResp updates
+			resp = vidResp
 		}
 
 		// add the json to the response
-		// NOTE: audio-to-text has no file attachment because the response is json
 		jsonResp, err := json.Marshal(resp)
 
 		if err != nil {

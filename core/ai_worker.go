@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -422,8 +423,9 @@ func (n *LivepeerNode) saveLocalAIWorkerResults(ctx context.Context, results int
 	ext, _ := common.MimeTypeToExtension(contentType)
 	fileName := string(RandomManifestID()) + ext
 
-	imgRes, ok := results.(worker.ImageResponse)
-	if !ok {
+	imgRes, isImg := results.(worker.ImageResponse)
+	vidRes, isVid := results.(worker.VideoBinaryResponse)
+	if !isImg && !isVid {
 		// worker.TextResponse is JSON, no file save needed
 		return results, nil
 	}
@@ -431,28 +433,44 @@ func (n *LivepeerNode) saveLocalAIWorkerResults(ctx context.Context, results int
 	if !exists {
 		return nil, errors.New("no storage available for request")
 	}
-	var buf bytes.Buffer
-	for i, image := range imgRes.Images {
-		buf.Reset()
-		err := worker.ReadImageB64DataUrl(image.Url, &buf)
-		if err != nil {
-			// try to load local file (image to video returns local file)
-			f, err := os.ReadFile(image.Url)
+	if isImg {
+		var buf bytes.Buffer
+		for i, image := range imgRes.Images {
+			buf.Reset()
+			err := worker.ReadImageB64DataUrl(image.Url, &buf)
+			if err != nil {
+				// try to load local file (image to video returns local file)
+				f, err := os.ReadFile(image.Url)
+				if err != nil {
+					return nil, err
+				}
+				buf = *bytes.NewBuffer(f)
+			}
+
+			osUrl, err := storage.OS.SaveData(ctx, fileName, bytes.NewBuffer(buf.Bytes()), nil, 0)
 			if err != nil {
 				return nil, err
 			}
-			buf = *bytes.NewBuffer(f)
-		}
 
-		osUrl, err := storage.OS.SaveData(ctx, fileName, bytes.NewBuffer(buf.Bytes()), nil, 0)
+			imgRes.Images[i].Url = osUrl
+
+			return imgRes, nil
+		}
+	} else if isVid {
+		vidBuf, err := base64.StdEncoding.DecodeString(vidRes.Base64Video)
+		osUrl, err := storage.OS.SaveData(ctx, fileName, bytes.NewBuffer(vidBuf), nil, 0)
 		if err != nil {
 			return nil, err
 		}
 
-		imgRes.Images[i].Url = osUrl
+		vidRes.Base64Video = osUrl
+		vidRes.FileSize = len(vidBuf)
+
+		return vidRes, nil
 	}
 
-	return imgRes, nil
+	return nil, errors.New("unknown response type")
+
 }
 
 func (n *LivepeerNode) saveRemoteAIWorkerResults(ctx context.Context, results *RemoteAIWorkerResult, requestID string) (*RemoteAIWorkerResult, error) {
@@ -753,6 +771,57 @@ func (orch *orchestrator) LLM(ctx context.Context, requestID string, req worker.
 	return res.Results, nil
 }
 
+func (orch *orchestrator) Lipsync(ctx context.Context, requestID string, req worker.GenLipsyncMultipartRequestBody) (interface{}, error) {
+	// local AIWorker processes job if combined orchestrator/ai worker
+	if orch.node.AIWorker != nil {
+		workerResp, err := orch.node.Lipsync(ctx, req)
+		if err == nil {
+			return orch.node.saveLocalAIWorkerResults(ctx, *workerResp, requestID, "video/mp4")
+		} else {
+			clog.Errorf(ctx, "Error processing with local ai worker err=%q", err)
+			if monitor.Enabled {
+				monitor.AIResultSaveError(ctx, "upscale", *req.ModelId, string(monitor.SegmentUploadErrorUnknown))
+			}
+			return nil, err
+		}
+	}
+
+	// remote ai worker proceses job
+	imgBytes, iErr := req.Image.Bytes()
+	audBytes, aErr := req.Audio.Bytes()
+	if aErr != nil || iErr != nil {
+		return nil, fmt.Errorf("Error reading image/audio bytes audio-err=%w image-err=%w", aErr, iErr)
+	}
+	inputUrl := "" // two input files needed. URLs sent as bytes in the multipart request in the audio and image fields
+	imageUrl, err := orch.SaveAIRequestInput(ctx, requestID, imgBytes)
+	if err != nil {
+		return nil, err
+	}
+	req.Image.InitFromBytes([]byte(imageUrl), "") // remove image data
+
+	audioUrl, err := orch.SaveAIRequestInput(ctx, requestID, audBytes)
+	if err != nil {
+		return nil, err
+	}
+	req.Image.InitFromBytes([]byte(audioUrl), "") // remove audio data
+
+	res, err := orch.node.AIWorkerManager.Process(ctx, requestID, "lipsync", *req.ModelId, inputUrl, AIJobRequestData{Request: req, InputUrl: inputUrl})
+	if err != nil {
+		return nil, err
+	}
+
+	res, err = orch.node.saveRemoteAIWorkerResults(ctx, res, requestID)
+	if err != nil {
+		clog.Errorf(ctx, "Error saving remote ai result err=%q", err)
+		if monitor.Enabled {
+			monitor.AIResultSaveError(ctx, "upscale", *req.ModelId, string(monitor.SegmentUploadErrorUnknown))
+		}
+		return nil, err
+	}
+
+	return res.Results, nil
+}
+
 // only used for sending work to remote AI worker
 func (orch *orchestrator) SaveAIRequestInput(ctx context.Context, requestID string, fileData []byte) (string, error) {
 	node := orch.node
@@ -917,6 +986,10 @@ func (n *LivepeerNode) SegmentAnything2(ctx context.Context, req worker.GenSegme
 
 func (n *LivepeerNode) LLM(ctx context.Context, req worker.GenLLMFormdataRequestBody) (interface{}, error) {
 	return n.AIWorker.LLM(ctx, req)
+}
+
+func (n *LivepeerNode) Lipsync(ctx context.Context, req worker.GenLipsyncMultipartRequestBody) (*worker.VideoBinaryResponse, error) {
+	return n.AIWorker.Lipsync(ctx, req)
 }
 
 // transcodeFrames converts a series of image URLs into a video segment for the image-to-video pipeline.
