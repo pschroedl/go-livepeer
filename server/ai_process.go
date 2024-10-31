@@ -35,6 +35,8 @@ const defaultLLMModelID = "meta-llama/llama-3.1-8B-Instruct"
 const defaultSegmentAnything2ModelID = "facebook/sam2-hiera-large"
 const defaultLipsyncModelID = "parler-tts/parler-tts-large-v1"
 
+var errWrongFormat = fmt.Errorf("result not in correct format")
+
 type ServiceUnavailableError struct {
 	err error
 }
@@ -103,19 +105,34 @@ func processTextToImage(ctx context.Context, params aiRequestParams, req worker.
 		return nil, err
 	}
 
-	imgResp := resp.(*worker.ImageResponse)
+	imgResp, ok := resp.(*worker.ImageResponse)
+	if !ok {
+		return nil, errWrongFormat
+	}
 
 	newMedia := make([]worker.Media, len(imgResp.Images))
 	for i, media := range imgResp.Images {
+		var result []byte
 		var data bytes.Buffer
+		var name string
 		writer := bufio.NewWriter(&data)
-		if err := worker.ReadImageB64DataUrl(media.Url, writer); err != nil {
-			return nil, err
+		err := worker.ReadImageB64DataUrl(media.Url, writer)
+		if err == nil {
+			// orchestrator sent base64 encoded result in .Url
+			name = string(core.RandomManifestID()) + ".png"
+			writer.Flush()
+			result = data.Bytes()
+		} else {
+			// orchestrator sent download url, get the data
+			name = filepath.Base(media.Url)
+			result, err = core.DownloadData(ctx, media.Url)
+			if err != nil {
+				return nil, err
+			}
 		}
-		writer.Flush()
 
-		name := string(core.RandomManifestID()) + ".png"
-		newUrl, err := params.os.SaveData(ctx, name, bytes.NewReader(data.Bytes()), nil, 0)
+		newUrl, err := params.os.SaveData(ctx, name, bytes.NewReader(result), nil, 0)
+
 		if err != nil {
 			return nil, fmt.Errorf("error saving image to objectStore: %w", err)
 		}
@@ -229,19 +246,33 @@ func processImageToImage(ctx context.Context, params aiRequestParams, req worker
 		return nil, err
 	}
 
-	imgResp := resp.(*worker.ImageResponse)
+	imgResp, ok := resp.(*worker.ImageResponse)
+	if !ok {
+		return nil, errWrongFormat
+	}
 
 	newMedia := make([]worker.Media, len(imgResp.Images))
 	for i, media := range imgResp.Images {
+		var result []byte
 		var data bytes.Buffer
+		var name string
 		writer := bufio.NewWriter(&data)
-		if err := worker.ReadImageB64DataUrl(media.Url, writer); err != nil {
-			return nil, err
+		err := worker.ReadImageB64DataUrl(media.Url, writer)
+		if err == nil {
+			// orchestrator sent bae64 encoded result in .Url
+			name = string(core.RandomManifestID()) + ".png"
+			writer.Flush()
+			result = data.Bytes()
+		} else {
+			// orchestrator sent download url, get the data
+			name = filepath.Base(media.Url)
+			result, err = core.DownloadData(ctx, media.Url)
+			if err != nil {
+				return nil, err
+			}
 		}
-		writer.Flush()
 
-		name := string(core.RandomManifestID()) + ".png"
-		newUrl, err := params.os.SaveData(ctx, name, bytes.NewReader(data.Bytes()), nil, 0)
+		newUrl, err := params.os.SaveData(ctx, name, bytes.NewReader(result), nil, 0)
 		if err != nil {
 			return nil, fmt.Errorf("error saving image to objectStore: %w", err)
 		}
@@ -367,11 +398,14 @@ func processImageToVideo(ctx context.Context, params aiRequestParams, req worker
 
 	// HACK: Re-use worker.ImageResponse to return results
 	// TODO: Refactor to return worker.VideoResponse
-	imgResp := resp.(*worker.ImageResponse)
+	imgResp, ok := resp.(*worker.ImageResponse)
+	if !ok {
+		return nil, errWrongFormat
+	}
 
 	videos := make([]worker.Media, len(imgResp.Images))
 	for i, media := range imgResp.Images {
-		data, err := downloadSeg(ctx, media.Url)
+		data, err := core.DownloadData(ctx, media.Url)
 		if err != nil {
 			return nil, err
 		}
@@ -506,19 +540,33 @@ func processUpscale(ctx context.Context, params aiRequestParams, req worker.GenU
 		return nil, err
 	}
 
-	imgResp := resp.(*worker.ImageResponse)
+	imgResp, ok := resp.(*worker.ImageResponse)
+	if !ok {
+		return nil, errWrongFormat
+	}
 
 	newMedia := make([]worker.Media, len(imgResp.Images))
 	for i, media := range imgResp.Images {
+		var result []byte
 		var data bytes.Buffer
+		var name string
 		writer := bufio.NewWriter(&data)
-		if err := worker.ReadImageB64DataUrl(media.Url, writer); err != nil {
-			return nil, err
+		err := worker.ReadImageB64DataUrl(media.Url, writer)
+		if err == nil {
+			// orchestrator sent bae64 encoded result in .Url
+			name = string(core.RandomManifestID()) + ".png"
+			writer.Flush()
+			result = data.Bytes()
+		} else {
+			// orchestrator sent download url, get the data
+			name = filepath.Base(media.Url)
+			result, err = core.DownloadData(ctx, media.Url)
+			if err != nil {
+				return nil, err
+			}
 		}
-		writer.Flush()
 
-		name := string(core.RandomManifestID()) + ".png"
-		newUrl, err := params.os.SaveData(ctx, name, bytes.NewReader(data.Bytes()), nil, 0)
+		newUrl, err := params.os.SaveData(ctx, name, bytes.NewReader(result), nil, 0)
 		if err != nil {
 			return nil, fmt.Errorf("error saving image to objectStore: %w", err)
 		}
@@ -634,7 +682,7 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 	mw, err := worker.NewSegmentAnything2MultipartWriter(&buf, req)
 	if err != nil {
 		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+			monitor.AIRequestError(err.Error(), "segment-anything-2", *req.ModelId, sess.OrchestratorInfo)
 		}
 		return nil, err
 	}
@@ -642,7 +690,7 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 	client, err := worker.NewClientWithResponses(sess.Transcoder(), worker.WithHTTPClient(httpClient))
 	if err != nil {
 		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+			monitor.AIRequestError(err.Error(), "segment-anything-2", *req.ModelId, sess.OrchestratorInfo)
 		}
 		return nil, err
 	}
@@ -650,14 +698,14 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 	imageRdr, err := req.Image.Reader()
 	if err != nil {
 		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+			monitor.AIRequestError(err.Error(), "segment-anything-2", *req.ModelId, sess.OrchestratorInfo)
 		}
 		return nil, err
 	}
 	config, _, err := image.DecodeConfig(imageRdr)
 	if err != nil {
 		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+			monitor.AIRequestError(err.Error(), "segment-anything-2", *req.ModelId, sess.OrchestratorInfo)
 		}
 		return nil, err
 	}
@@ -666,7 +714,7 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 	setHeaders, balUpdate, err := prepareAIPayment(ctx, sess, outPixels)
 	if err != nil {
 		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+			monitor.AIRequestError(err.Error(), "segment-anything-2", *req.ModelId, sess.OrchestratorInfo)
 		}
 		return nil, err
 	}
@@ -677,7 +725,7 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 	took := time.Since(start)
 	if err != nil {
 		if monitor.Enabled {
-			monitor.AIRequestError(err.Error(), "segment anything 2", *req.ModelId, sess.OrchestratorInfo)
+			monitor.AIRequestError(err.Error(), "segment-anything-2", *req.ModelId, sess.OrchestratorInfo)
 		}
 		return nil, err
 	}
@@ -701,7 +749,7 @@ func submitSegmentAnything2(ctx context.Context, params aiRequestParams, sess *A
 			pricePerAIUnit = float64(priceInfo.PricePerUnit) / float64(priceInfo.PixelsPerUnit)
 		}
 
-		monitor.AIRequestFinished(ctx, "segment anything 2", *req.ModelId, monitor.AIJobInfo{LatencyScore: sess.LatencyScore, PricePerUnit: pricePerAIUnit}, sess.OrchestratorInfo)
+		monitor.AIRequestFinished(ctx, "segment-anything-2", *req.ModelId, monitor.AIJobInfo{LatencyScore: sess.LatencyScore, PricePerUnit: pricePerAIUnit}, sess.OrchestratorInfo)
 	}
 
 	return resp.JSON200, nil
@@ -722,7 +770,10 @@ func processAudioToText(ctx context.Context, params aiRequestParams, req worker.
 		return nil, err
 	}
 
-	txtResp := resp.(*worker.TextResponse)
+	txtResp, ok := resp.(*worker.TextResponse)
+	if !ok {
+		return nil, errWrongFormat
+	}
 
 	return txtResp, nil
 }
@@ -1094,6 +1145,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		submitFn = func(ctx context.Context, params aiRequestParams, sess *AISession) (interface{}, error) {
 			return submitTextToImage(ctx, params, sess, v)
 		}
+		ctx = clog.AddVal(ctx, "prompt", v.Prompt)
 	case worker.GenImageToImageMultipartRequestBody:
 		cap = core.Capability_ImageToImage
 		modelID = defaultImageToImageModelID
@@ -1103,6 +1155,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		submitFn = func(ctx context.Context, params aiRequestParams, sess *AISession) (interface{}, error) {
 			return submitImageToImage(ctx, params, sess, v)
 		}
+		ctx = clog.AddVal(ctx, "prompt", v.Prompt)
 	case worker.GenImageToVideoMultipartRequestBody:
 		cap = core.Capability_ImageToVideo
 		modelID = defaultImageToVideoModelID
@@ -1121,6 +1174,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		submitFn = func(ctx context.Context, params aiRequestParams, sess *AISession) (interface{}, error) {
 			return submitUpscale(ctx, params, sess, v)
 		}
+		ctx = clog.AddVal(ctx, "prompt", v.Prompt)
 	case worker.GenAudioToTextMultipartRequestBody:
 		cap = core.Capability_AudioToText
 		modelID = defaultAudioToTextModelID
@@ -1139,6 +1193,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		submitFn = func(ctx context.Context, params aiRequestParams, sess *AISession) (interface{}, error) {
 			return submitLLM(ctx, params, sess, v)
 		}
+		ctx = clog.AddVal(ctx, "prompt", v.Prompt)
 	case worker.GenSegmentAnything2MultipartRequestBody:
 		cap = core.Capability_SegmentAnything2
 		modelID = defaultSegmentAnything2ModelID
@@ -1163,6 +1218,10 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	capName := cap.String()
 	ctx = clog.AddVal(ctx, "capability", capName)
 
+	clog.V(common.VERBOSE).Infof(ctx, "Received AI request model_id=%s", modelID)
+	start := time.Now()
+	defer clog.Infof(ctx, "Processed AI request model_id=%v took=%v", modelID, time.Since(start))
+
 	var resp interface{}
 
 	cctx, cancel := context.WithTimeout(ctx, processingRetryTimeout)
@@ -1174,7 +1233,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		case <-cctx.Done():
 			err := fmt.Errorf("no orchestrators available within %v timeout", processingRetryTimeout)
 			if monitor.Enabled {
-				monitor.AIRequestError(err.Error(), capName, modelID, nil)
+				monitor.AIRequestError(err.Error(), monitor.ToPipeline(capName), modelID, nil)
 			}
 			return nil, &ServiceUnavailableError{err: err}
 		default:
@@ -1212,7 +1271,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	if resp == nil {
 		errMsg := "no orchestrators available"
 		if monitor.Enabled {
-			monitor.AIRequestError(errMsg, capName, modelID, nil)
+			monitor.AIRequestError(errMsg, monitor.ToPipeline(capName), modelID, nil)
 		}
 		return nil, &ServiceUnavailableError{err: errors.New(errMsg)}
 	}
@@ -1266,6 +1325,7 @@ func prepareAIPayment(ctx context.Context, sess *AISession, outPixels int64) (wo
 	setHeaders := func(_ context.Context, req *http.Request) error {
 		req.Header.Set(segmentHeader, segCreds)
 		req.Header.Set(paymentHeader, payment)
+		req.Header.Set("Authorization", protoVerAIWorker)
 		return nil
 	}
 
